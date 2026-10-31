@@ -31,7 +31,8 @@
 namespace fs = std::filesystem;
 
 namespace {
-constexpr unsigned short kPort = 47831;
+constexpr unsigned short kDefaultPort = 47831;
+unsigned short g_port = kDefaultPort;  // TCP port between the two PCs; set with --port
 constexpr int kReportSeconds = 1;           // sender -> receiver, and how often `auto` scans
 constexpr int kDiscordRefreshSeconds = 5;   // receiver -> Discord: unchanged activity is re-sent at most this often
                                             // (Discord rate-limits presence updates to roughly 5 per 20 seconds)
@@ -705,7 +706,7 @@ private:
 bool report(const std::string& host, const std::string& token, const std::string& message) {
     sockaddr_in address{};
     address.sin_family = AF_INET;
-    address.sin_port = htons(kPort);
+    address.sin_port = htons(g_port);
     if (InetPtonA(AF_INET, host.c_str(), &address.sin_addr) != 1) return false;
     SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (s == INVALID_SOCKET) return false;
@@ -746,7 +747,7 @@ int run_pinned_sender(const std::string& host, const std::string& token, long lo
     long long start = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count() - playedSeconds;
     bool reported = false;
     bool receiverUp = true;  // so a failure is announced once, not every second
-    std::cout << "Showing \"" << picked.name << "\" on Discord via " << host << ":" << kPort;
+    std::cout << "Showing \"" << picked.name << "\" on Discord via " << host << ":" << g_port;
     if (playedSeconds > 0) std::cout << ", already playing for " << playedSeconds / 3600 << "h " << playedSeconds % 3600 / 60 << "m " << playedSeconds % 60 << "s";
     std::cout << " (Ctrl+C to stop).\n";
 
@@ -756,7 +757,7 @@ int run_pinned_sender(const std::string& host, const std::string& token, long lo
             else if (!receiverUp) std::cout << "Receiver reachable again.\n";
             reported = true; receiverUp = true;
         } else {
-            if (receiverUp) std::cerr << "Receiver did not accept the report (check IP, token, and firewall); retrying every second.\n";
+            if (receiverUp) std::cerr << "Receiver did not accept the report (check IP, port, token, and firewall); retrying every second.\n";
             reported = false; receiverUp = false;
         }
         sleep_unless_stopped(kReportSeconds * 1000);
@@ -797,7 +798,7 @@ int run_auto_sender(const std::string& host, const std::string& token) {
     auto listTime = fs::last_write_time(listFile, ec);
     std::vector<EpicInstall> epicInstalls = load_epic_installs();
     std::cout << "Loaded " << apps.size() << " known games (" << epicInstalls.size() << " Epic installs found). Receiver: "
-              << host << ":" << kPort << ". Auto-detect on (Ctrl+C to stop).\n";
+              << host << ":" << g_port << ". Auto-detect on (Ctrl+C to stop).\n";
 
     // A game found running this cycle. `key` identifies it across cycles.
     struct Detected { std::string key, appId, name; long long start = 0; std::string via; };
@@ -934,7 +935,7 @@ int run_auto_sender(const std::string& host, const std::string& token) {
                     lastReport = now;
                 } else {
                     // lastReport is left alone, so the next scan (one second later) tries again.
-                    if (receiverUp) std::cerr << "Receiver did not accept the report (check IP, token, and firewall); retrying every second.\n";
+                    if (receiverUp) std::cerr << "Receiver did not accept the report (check IP, port, token, and firewall); retrying every second.\n";
                     receiverUp = false;
                 }
             }
@@ -964,14 +965,14 @@ int run_receiver(const std::string& token) {
     SOCKET listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     sockaddr_in address{};
     address.sin_family = AF_INET;
-    address.sin_port = htons(kPort);
+    address.sin_port = htons(g_port);
     address.sin_addr.s_addr = htonl(INADDR_ANY);
     if (listener == INVALID_SOCKET || bind(listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR ||
         listen(listener, 4) == SOCKET_ERROR) {
-        std::cerr << "Could not listen on TCP port " << kPort << ".\n";
+        std::cerr << "Could not listen on TCP port " << g_port << " (is another program, or another copy of this one, already using it? Try a different --port).\n";
         return 1;
     }
-    std::cout << "Listening on TCP port " << kPort << ". Keep the Discord desktop app running on this PC.\n";
+    std::cout << "Listening on TCP port " << g_port << ". Keep the Discord desktop app running on this PC.\n";
 
     DiscordIpc discord;
     bool active = false;
@@ -1093,18 +1094,19 @@ void print_usage() {
         "Game Presence Mirror\n"
         "Shows a game as your Discord activity on your streaming PC.\n\n"
         "Streaming PC (where Discord runs):\n"
-        "  game_presence_mirror.exe receive --token <secret>\n\n"
+        "  game_presence_mirror.exe receive --token <secret> [--port <n>]\n\n"
         "Gaming PC:\n"
         "  game_presence_mirror.exe pick <game name>       search Discord's game list and pick one game\n"
         "  game_presence_mirror.exe pick --id <app id> <name>   pick a custom game (your own Discord application)\n"
-        "  game_presence_mirror.exe send <streaming PC IPv4> --token <secret>\n"
+        "  game_presence_mirror.exe send <streaming PC IPv4> --token <secret> [--port <n>]\n"
         "                                                  asks which picked game to show, then shows it (running or not)\n"
         "    optional: --hours <n> --minutes <n> --seconds <n>   start the timer that long ago (time already played)\n"
-        "  game_presence_mirror.exe auto <streaming PC IPv4> --token <secret>\n"
+        "  game_presence_mirror.exe auto <streaming PC IPv4> --token <secret> [--port <n>]\n"
         "                                                  report whatever known game is actually running\n"
         "  game_presence_mirror.exe list                   show your picked games\n"
         "  game_presence_mirror.exe update                 refresh Discord's game list\n\n"
-        "The token is any password you invent; it must match on both PCs.\n";
+        "The token is any password you invent; it must match on both PCs.\n"
+        "--port <n> changes the TCP port (default 47831); it must match on both PCs.\n";
 }
 }  // namespace
 
@@ -1123,8 +1125,9 @@ int wmain(int argc, wchar_t** argv) {
         }
         return false;
     };
-    std::string token, hoursText, minutesText, secondsText;
+    std::string token, hoursText, minutesText, secondsText, portText;
     take_option("--token", token);
+    bool hasPort = take_option("--port", portText);
     bool hasHours = take_option("--hours", hoursText);
     bool hasMinutes = take_option("--minutes", minutesText);
     bool hasSeconds = take_option("--seconds", secondsText);
@@ -1143,8 +1146,20 @@ int wmain(int argc, wchar_t** argv) {
     if (hasSeconds) playedSeconds += std::stoll(secondsText);
     if (playedSeconds > 1000ll * 3600) { std::cerr << "The played time can be at most 1000 hours.\n"; return 2; }
 
+    if (hasPort) {
+        if (!all_digits(portText) || portText.size() > 5 || std::stoi(portText) < 1 || std::stoi(portText) > 65535) {
+            std::cerr << "--port must be a number from 1 to 65535.\n";
+            return 2;
+        }
+        g_port = static_cast<unsigned short>(std::stoi(portText));
+    }
+
     if (args.empty()) { print_usage(); return 0; }
     const std::string& cmd = args[0];
+    if (hasPort && cmd != "receive" && cmd != "send" && cmd != "auto") {
+        std::cerr << "--port only works with `receive`, `send` and `auto`.\n";
+        return 2;
+    }
     if ((hasHours || hasMinutes || hasSeconds) && cmd != "send") {
         std::cerr << "--hours, --minutes and --seconds only work with `send`.\n";
         return 2;

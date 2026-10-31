@@ -8,7 +8,7 @@ Windows only. Single static executable (`game_presence_mirror.exe`), nothing to 
 
 ```
  Gaming PC                                    Streaming PC
- ┌──────────────────────┐   TCP 47831 (LAN)   ┌────────────────────────────┐
+ ┌──────────────────────┐   TCP port (LAN)    ┌────────────────────────────┐
  │ send  (chosen game)  │ ──────────────────▶ │ receive                    │
  │ auto  (running game) │  "SET <appId> ..."  │  - checks token            │
  │  - looks up app ID   │  every 1 s          │  - talks to Discord via    │
@@ -109,15 +109,15 @@ Run `game_presence_mirror.exe` with no arguments to print a short usage summary.
 
 | Command | Run on | What it does |
 |---|---|---|
-| `receive --token <secret>` | Streaming PC | Listens on TCP 47831 and publishes reports to the local Discord app. |
+| `receive --token <secret> [--port <n>]` | Streaming PC | Listens on a TCP port (default 47831) and publishes reports to the local Discord app. |
 | `pick <game name>` | Gaming PC | Searches Discord's game list by name and adds the game you choose to your picked list (`picked.txt`). |
 | `pick --id <application id> <name>` | Gaming PC | Adds a custom game to the picked list, using an application you created in the Discord developer portal. |
-| `send <receiver IPv4> --token <secret>` | Gaming PC | Asks which picked game to show, then shows it on Discord continuously, whether or not it is running on the gaming PC. |
-| `auto <receiver IPv4> --token <secret>` | Gaming PC | Detects any game from Discord's list that is actually running and reports it; stops when it closes. |
+| `send <receiver IPv4> --token <secret> [--port <n>]` | Gaming PC | Asks which picked game to show, then shows it on Discord continuously, whether or not it is running on the gaming PC. |
+| `auto <receiver IPv4> --token <secret> [--port <n>]` | Gaming PC | Detects any game from Discord's list that is actually running and reports it; stops when it closes. |
 | `list` | Gaming PC | Prints all picked games. |
 | `update` | Gaming PC | Force re-downloads Discord's game list. |
 
-### `receive --token <secret>`
+### `receive --token <secret> [--port <n>]`
 
 Run on the **streaming PC**, the one where the Discord desktop app is installed.
 
@@ -126,8 +126,10 @@ game_presence_mirror.exe receive --token mysecret
 ```
 
 - Discord must be open and signed in on this PC.
-- Allow it through Windows Firewall (private network), or add an inbound TCP rule for port 47831.
-- Output: `Listening on TCP port 47831...`, then `Now showing on Discord: <game>` when a game starts, and `Game closed; clearing Discord presence.` when it ends.
+- Allow it through Windows Firewall (private network), or add an inbound TCP rule for the port you use (47831 unless you set `--port`).
+- To use another port, add `--port`, for example `game_presence_mirror.exe receive --token mysecret --port 52000`. The senders must use the same port (see "Changing the port" below).
+- If the port is already taken (another program, or a second copy of this one), it prints `Could not listen on TCP port ...`; pick a different `--port`.
+- Output: `Listening on TCP port 47831...` (or your port), then `Now showing on Discord: <game>` when a game starts, and `Game closed; clearing Discord presence.` when it ends.
 - Errors: `Could not reach Discord...` means the Discord app isn't running or isn't signed in. `Rejected a report with a wrong token.` means the token differs from the sender's.
 - Runs until you close the window (Ctrl+C).
 
@@ -171,7 +173,7 @@ game_presence_mirror.exe pick --id 123456789012345678 My Indie Game
 - It is added to `picked.txt` like any other pick; `send` then offers it in its menu. `auto` can't detect custom games.
 - Custom applications show the name and icon you gave them, with no store page or official game artwork.
 
-### `send <receiver IPv4> --token <secret>`
+### `send <receiver IPv4> --token <secret> [--port <n>]`
 
 Run on the **gaming PC**. Asks which of your picked games to show, then shows it on Discord.
 
@@ -204,7 +206,7 @@ Enter a number (blank to cancel):
 - Output: `Playing: <game>` on the first successful report.
 - Errors: `No games picked yet...` means run `pick` first. `Receiver did not accept the report...` means a wrong IP, wrong token, firewall block, or the receiver isn't running; it retries automatically.
 
-### `auto <receiver IPv4> --token <secret>`
+### `auto <receiver IPv4> --token <secret> [--port <n>]`
 
 Run on the **gaming PC**. Auto-detect mode: no need to pick games first.
 
@@ -240,12 +242,28 @@ game_presence_mirror.exe update
 ### Options and limits
 
 - `--token <secret>` is used by `receive`, `send` and `auto`. It is any password you invent (no spaces, up to 64 characters) and must be identical on both PCs. It can be placed anywhere on the command line.
+- `--port <n>` is used by `receive`, `send` and `auto`. It sets the TCP port (1 to 65535) and defaults to 47831. It must be the same on both PCs (see "Changing the port" below).
 - `--hours <n>`, `--minutes <n>` and `--seconds <n>` are used by `send` only (see above).
-- There are no other flags. These are fixed in the source ([src/main.cpp](src/main.cpp)): port 47831, report and scan interval 1 second, receiver-to-Discord refresh 5 seconds, receiver expiry 20 seconds.
+- There are no other flags. These are fixed in the source ([src/main.cpp](src/main.cpp)): report and scan interval 1 second, receiver-to-Discord refresh 5 seconds, receiver expiry 20 seconds.
 - There is no command to remove a picked game: delete its line from `picked.txt` by hand.
 - Games not in Discord's list can only be shown through `send`, using `pick --id` (not detected by `auto`).
 - Only one game is shown at a time. In `auto`, if two known games run at once, only one is reported.
 - No background or tray mode; both sides run in a console window.
+
+### Changing the port
+
+The default TCP port is 47831. To use another one, pass the same `--port` on **both** PCs and open that port in the streaming PC's firewall:
+
+```
+Streaming PC:  game_presence_mirror.exe receive --token mysecret --port 52000
+Gaming PC:     game_presence_mirror.exe send 10.2.0.12 --token mysecret --port 52000
+Gaming PC:     game_presence_mirror.exe auto 10.2.0.12 --token mysecret --port 52000
+```
+
+- If the two PCs use different ports, the sender prints `Receiver did not accept the report (check IP, port, token, and firewall)`.
+- Choose a port from 1 to 65535 that nothing else uses; ports above 1024 (for example 49152 and up) avoid clashing with common services.
+- The port isn't stored anywhere: pass `--port` every time you run `receive`, `send` or `auto`. Leave it out to use 47831.
+- Only the `receive`, `send` and `auto` commands take `--port`.
 
 ### picked.txt
 
@@ -256,7 +274,7 @@ Written by `pick` and read by `send` and `list`. Next to the exe, one game per l
 Show one specific game:
 
 1. Gaming PC: run `game_presence_mirror.exe pick <game name>` and choose the game (repeat for any other games you want in your list).
-2. Streaming PC: run `game_presence_mirror.exe receive --token mysecret` (allow inbound TCP 47831 in Windows Firewall on your private network).
+2. Streaming PC: run `game_presence_mirror.exe receive --token mysecret` (allow inbound TCP 47831 in Windows Firewall on your private network; add `--port <n>` here and on the senders to use another port).
 3. Gaming PC: run `game_presence_mirror.exe send <streaming-PC-IPv4> --token mysecret` and choose a game from the menu.
 
 Or show whatever game is running, automatically: do step 2, then on the gaming PC run `game_presence_mirror.exe auto <streaming-PC-IPv4> --token mysecret`.
@@ -351,6 +369,7 @@ The exe is then `build\game_presence_mirror.exe`. The CMake route has not been t
 
 Add a line here for each change you make.
 
+- **configurable port:** `receive`, `send` and `auto` accept `--port <n>` (1 to 65535, default 47831), which must match on both PCs. A receiver that can't bind its port now says so and suggests another one; sender connection errors mention the port.
 - **build instructions:** added step-by-step compile instructions (MSYS2 GCC), an explanation of each flag, a dependency check, deployment notes and troubleshooting. Fixed `CMakeLists.txt` to link statically (`-municode -static ...`) so a CMake build is also dependency-free.
 - **per-second reporting:** `send` and `auto` now report to the streaming PC every second (and `auto` scans every second) instead of every 5 / 2 seconds, so starting, closing or switching a game shows up within about a second. The receiver forwards to Discord only on a change plus a 5-second refresh, because Discord rate-limits presence updates and computes the elapsed timer itself from the start time. Connection errors are now printed once per outage rather than repeatedly.
 - **launcher support in auto:** after checking which launchers Discord's list covers, `auto` also detects Epic Games Launcher games (from Epic's install manifests, matched to Epic ids in the list) and, as a conservative fallback, games running from a known game-library folder whose folder name exactly matches a game that lists no exe. `auto` reloads the game list when `detectable.json` changes (after `update`), shows how each game was detected, and warns once about ambiguous exe names. Xbox / Microsoft Store games are detected through the Store ID in their `MicrosoftGame.config` when the game ships one.
